@@ -1,0 +1,237 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in CentOS 7 (glibc 2.17)
+        run: |
+          docker run --rm -v "$PWD":/work -w /work centos:7 bash -c '
+            sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*.repo
+            sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*.repo
+            yum install -y https://packages.endpointdev.com/rhel/7/os/x86_64/endpoint-repo.x86_64.rpm
+            yum install -y gcc git make
+            git config --global --add safe.directory /work
+            make
+            strip rmate
+          '
+      - name: Package
+        run: tar czf rmate-linux-amd64.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-linux-amd64
+          path: rmate-linux-amd64.tar.gz
+
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build
+        run: |
+          make CC=aarch64-linux-gnu-gcc
+          aarch64-linux-gnu-strip rmate
+      - name: Package
+        run: tar czf rmate-linux-arm64.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-linux-arm64
+          path: rmate-linux-arm64.tar.gz
+
+  build-linux-musl-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in musl container
+        run: |
+          docker run --rm -v "$PWD":/work -w /work muslcc/x86_64:x86_64-linux-musl sh -c '
+            apk add --no-cache make git
+            git config --global --add safe.directory /work
+            make CC=gcc
+            strip rmate
+          '
+      - name: Package
+        run: tar czf rmate-linux-musl-amd64.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-linux-musl-amd64
+          path: rmate-linux-musl-amd64.tar.gz
+
+  build-linux-musl-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in musl cross-compiler container
+        run: |
+          docker run --rm -v "$PWD":/work -w /work muslcc/x86_64:aarch64-linux-musl sh -c '
+            apk add --no-cache make git
+            git config --global --add safe.directory /work
+            make CC=gcc
+            strip rmate
+          '
+      - name: Package
+        run: tar czf rmate-linux-musl-arm64.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-linux-musl-arm64
+          path: rmate-linux-musl-arm64.tar.gz
+
+  build-freebsd:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            vm_arch: x86_64
+          - arch: arm64
+            vm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get build id
+        id: build-id
+        run: echo "bid=$(git log -1 --format='%cd-%h' --date=format:'%Y%m%d')" >> "$GITHUB_OUTPUT"
+      - name: Build on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '14.2'
+          arch: ${{ matrix.vm_arch }}
+          usesh: true
+          prepare: |
+            pkg install -y gmake
+          run: |
+            gmake CC=cc BUILD_ID="${{ steps.build-id.outputs.bid }}"
+            strip rmate
+      - name: Package
+        run: tar czf rmate-freebsd-${{ matrix.arch }}.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-freebsd-${{ matrix.arch }}
+          path: rmate-freebsd-${{ matrix.arch }}.tar.gz
+
+  build-openbsd:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            vm_arch: x86_64
+          - arch: arm64
+            vm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get build id
+        id: build-id
+        run: echo "bid=$(git log -1 --format='%cd-%h' --date=format:'%Y%m%d')" >> "$GITHUB_OUTPUT"
+      - name: Build on OpenBSD
+        uses: vmactions/openbsd-vm@v1
+        with:
+          release: '7.8'
+          arch: ${{ matrix.vm_arch }}
+          usesh: true
+          prepare: |
+            pkg_add gmake
+          run: |
+            gmake CC=cc BUILD_ID="${{ steps.build-id.outputs.bid }}"
+            strip rmate
+      - name: Package
+        run: tar czf rmate-openbsd-${{ matrix.arch }}.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-openbsd-${{ matrix.arch }}
+          path: rmate-openbsd-${{ matrix.arch }}.tar.gz
+
+  build-netbsd:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            vm_arch: x86_64
+          - arch: arm64
+            vm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get build id
+        id: build-id
+        run: echo "bid=$(git log -1 --format='%cd-%h' --date=format:'%Y%m%d')" >> "$GITHUB_OUTPUT"
+      - name: Build on NetBSD
+        uses: vmactions/netbsd-vm@v1
+        with:
+          release: '10.1'
+          arch: ${{ matrix.vm_arch }}
+          usesh: true
+          prepare: |
+            pkg_add gmake
+          run: |
+            gmake CC=cc BUILD_ID="${{ steps.build-id.outputs.bid }}"
+            strip rmate
+      - name: Package
+        run: tar czf rmate-netbsd-${{ matrix.arch }}.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-netbsd-${{ matrix.arch }}
+          path: rmate-netbsd-${{ matrix.arch }}.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            cflags: "-arch arm64"
+          - arch: amd64
+            cflags: "-arch x86_64"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          make
+          strip rmate
+        env:
+          CFLAGS: ${{ matrix.cflags }}
+      - name: Package
+        run: tar czf rmate-darwin-${{ matrix.arch }}.tar.gz rmate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmate-darwin-${{ matrix.arch }}
+          path: rmate-darwin-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs:
+      - build-linux-amd64
+      - build-linux-arm64
+      - build-linux-musl-amd64
+      - build-linux-musl-arm64
+      - build-freebsd
+      - build-openbsd
+      - build-netbsd
+      - build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Generate checksums
+        run: sha256sum rmate-*.tar.gz > checksums-sha256.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rmate-*.tar.gz
+            checksums-sha256.txt
+          generate_release_notes: true
